@@ -163,7 +163,7 @@ def _load_checksums(release: ReleaseInfo, token: str, folder: Path) -> dict[str,
             "Azimut не будет ставить такое обновление."
         )
     name = str(release.checksums_asset.get("name") or "SHA256SUMS")
-    dest = _download_asset(release.checksums_asset, token, folder / name)
+    dest = _download_asset(release.checksums_asset, token, folder / name, min_size=64)
     text = dest.read_text(encoding="utf-8", errors="replace")
     checksums = parse_checksums(text)
     if not checksums:
@@ -171,19 +171,55 @@ def _load_checksums(release: ReleaseInfo, token: str, folder: Path) -> dict[str,
     return checksums
 
 
-def _download_asset(asset: dict, token: str, dest: Path) -> Path:
-    url = asset.get("url")
-    if not url:
+def _github_json_error(data: bytes) -> str:
+    text = data.decode("utf-8", errors="replace").strip()
+    if not text.startswith("{"):
+        return ""
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return ""
+    return str(payload.get("message") or "").strip()
+
+
+def _download_asset(asset: dict, token: str, dest: Path, min_size: int = 1000) -> Path:
+    candidates = []
+    api_url = str(asset.get("url") or "").strip()
+    browser_url = str(asset.get("browser_download_url") or "").strip()
+    if api_url:
+        candidates.append((api_url, "application/octet-stream"))
+    if browser_url and browser_url != api_url:
+        candidates.append((browser_url, "*/*"))
+    if not candidates:
         raise RuntimeError("У релиза нет файла для скачивания.")
-    headers = _headers(token)
-    headers["Accept"] = "application/octet-stream"
-    request = urllib.request.Request(str(url), headers=headers)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(request, timeout=180, context=ssl.create_default_context()) as response:
-        dest.write_bytes(response.read())
-    if dest.stat().st_size < 1000:
-        raise RuntimeError("Скачанный файл обновления слишком маленький. Проверьте токен и вложение релиза.")
-    return dest
+    last_error = "GitHub не отдал файл обновления."
+    for url, accept in candidates:
+        headers = _headers(token)
+        headers["Accept"] = accept
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=180, context=ssl.create_default_context()) as response:
+                data = response.read()
+        except urllib.error.HTTPError as exc:
+            last_error = f"GitHub ответил кодом {exc.code} при скачивании {dest.name}."
+            continue
+        except urllib.error.URLError:
+            last_error = "Нет доступа к GitHub. Проверьте сеть."
+            continue
+        message = _github_json_error(data)
+        if message:
+            last_error = f"GitHub не отдал файл {dest.name}: {message}"
+            continue
+        if len(data) < min_size:
+            last_error = (
+                f"Скачанный файл {dest.name} слишком маленький ({len(data)} байт). "
+                "Проверьте токен и вложение релиза."
+            )
+            continue
+        dest.write_bytes(data)
+        return dest
+    raise RuntimeError(last_error)
 
 
 def uses_installer() -> bool:
