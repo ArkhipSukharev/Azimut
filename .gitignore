@@ -6,6 +6,7 @@ active/
 profiles/
 dist/
 build/
+.cursor/
 vault.azimut
 settings.json
 github.token
