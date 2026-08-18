@@ -252,19 +252,7 @@ class AzimutApp:
         self.tunnel_state = ctk.CTkLabel(inner, text="Туннель выключен", font=_font(13), text_color=MUTED)
         self.tunnel_state.pack()
         self.zapret_state = ctk.CTkLabel(inner, text="Обход выключен", font=_font(13), text_color=MUTED)
-        self.zapret_state.pack(pady=(2, 12))
-        ctk.CTkButton(
-            inner,
-            text="Вернуть обычный интернет",
-            width=240,
-            height=34,
-            corner_radius=10,
-            fg_color=CARD2,
-            hover_color=LINE,
-            text_color=TEXT,
-            font=_font(12),
-            command=self.restore_internet_now,
-        ).pack(pady=(0, 8))
+        self.zapret_state.pack(pady=(2, 20))
 
         self.profile_chip = ctk.CTkButton(
             inner,
@@ -1797,28 +1785,6 @@ class AzimutApp:
             except Exception:
                 pass
         self.root.after(0, self.root.destroy)
-
-    def restore_internet_now(self) -> None:
-        def work():
-            stopped = restore_network()
-            try:
-                zapret_engine.stop(force=True)
-            except Exception:
-                pass
-            return stopped
-
-        def done(stopped):
-            self.connected_since = None
-            self._last_tunnel_error = ""
-            self.zapret_var.set(False)
-            self.settings.zapret_enabled = False
-            self.settings.save()
-            self.zapret_info.configure(text=self._zapret_status_text())
-            write_log("Обычный интернет возвращён кнопкой" + (": " + ", ".join(stopped) if stopped else ""))
-            self.refresh_status()
-            messagebox.showinfo(APP_NAME, "Обычный интернет возвращён. Туннель и обход выключены.")
-
-        self._run_bg(work, done, wait_title="Возвращаю интернет", wait_text="Выключаю туннель и обход.")
 
     def _refresh_welcome(self) -> None:
         if not hasattr(self, "welcome"):
