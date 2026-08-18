@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+logs/
+cache/
+active/
+profiles/
+dist/
+build/
+vault.azimut
+settings.json
+github.token
+*.log
+*.zip
+*.conf
+Azimut.lnk
+Azimut.exe
+_internal/

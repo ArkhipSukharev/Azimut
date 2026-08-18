@@ -1,0 +1,16 @@
+---
+description: После правок всегда пересобирать Azimut и сразу отправлять в GitHub
+alwaysApply: true
+---
+
+# Сборка и GitHub
+
+После любых правок в этом проекте, которые меняют программу, установщик или исходники:
+
+1. Пересобери приложение: `python build.py`
+2. Пересобери установщик: `python make_installer.py`
+3. Проверь, что не в коммит не попали `settings.json`, `vault.azimut`, `github.token`, `*.conf`, `Azimut.exe`, `_internal/`, `dist/`, `logs/`, `cache/`
+4. Сделай коммит и сразу `git push` в закрытый репозиторий `ArkhipSukharev/Azimut` (ветка `main`)
+5. Не жди отдельной просьбы «запушить» — пуш обязателен, если коммит прошёл
+
+Не пушь секреты и не делай force push в `main`.
