@@ -1,6 +1,6 @@
 ﻿#define AppName "Azimut"
 #ifndef AppVer
-  #define AppVer "1.7.0"
+  #define AppVer "1.7.1"
 #endif
 #define AppPublisher "Azimut"
 #define AppId "{{A7E3C1D0-4B92-4F18-9E6A-8C2D5F1B0A34}"
@@ -45,8 +45,8 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
-Source: "Azimut.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Azimut\Azimut.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\Azimut\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "engine\*"; DestDir: "{app}\engine"; Flags: ignoreversion
 Source: "zapret\bin\*"; DestDir: "{app}\zapret\bin"; Flags: ignoreversion
 Source: "assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion

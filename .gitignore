@@ -11,6 +11,7 @@ vault.azimut
 settings.json
 github.token
 *.log
+*.pid
 *.zip
 *.conf
 Azimut.lnk

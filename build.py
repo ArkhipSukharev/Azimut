@@ -86,11 +86,15 @@ def main() -> int:
     if not (DIST / "Azimut.exe").exists():
         raise SystemExit("Не появился Azimut.exe. Сборка не удалась.")
     copy_payload()
-    shutil.copy2(DIST / "Azimut.exe", ROOT / "Azimut.exe")
-    local_internal = ROOT / "_internal"
-    if local_internal.exists():
-        shutil.rmtree(local_internal)
-    shutil.copytree(DIST / "_internal", local_internal)
+    try:
+        shutil.copy2(DIST / "Azimut.exe", ROOT / "Azimut.exe")
+        local_internal = ROOT / "_internal"
+        if local_internal.exists():
+            shutil.rmtree(local_internal)
+        shutil.copytree(DIST / "_internal", local_internal)
+    except OSError as exc:
+        print("Локальную копию Azimut.exe не обновил: файл занят. Установщик возьмёт свежую сборку из dist.")
+        print(exc)
     archive = make_zip(APP_VERSION)
     sums = write_sha256sums([archive])
     print("Папка программы:", DIST)

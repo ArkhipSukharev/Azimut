@@ -76,15 +76,28 @@ def launcher_arguments() -> str:
     return f'"{launch_script().resolve()}"'
 
 
-def desktop_dir() -> Path:
+def _special_folder(csidl: int) -> Path | None:
     import ctypes
 
     buffer = ctypes.create_unicode_buffer(260)
-    ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buffer)
+    if ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buffer) != 0:
+        return None
     path = Path(buffer.value)
-    if path.exists():
-        return path
-    return Path.home() / "Desktop"
+    return path if path.exists() else None
+
+
+def desktop_dir() -> Path:
+    return _special_folder(0x10) or (Path.home() / "Desktop")
+
+
+def public_desktop_dir() -> Path | None:
+    return _special_folder(0x19)
+
+
+def desktop_shortcut_exists() -> bool:
+    name = "Azimut.lnk"
+    folders = [desktop_dir(), public_desktop_dir()]
+    return any(folder is not None and (folder / name).is_file() for folder in folders)
 
 
 def vault_path() -> Path:

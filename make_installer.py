@@ -38,11 +38,11 @@ def main() -> int:
         sys.path.insert(0, str(ROOT))
     from azimut import APP_VERSION
 
-    exe = ROOT / "Azimut.exe"
+    exe = ROOT / "dist" / "Azimut" / "Azimut.exe"
     if not exe.is_file():
-        raise SystemExit("Сначала нужна готовая программа Azimut.exe в папке D:\\Azimut.")
-    if not (ROOT / "_internal").is_dir():
-        raise SystemExit("Нет папки _internal. Сначала соберите программу: python build.py")
+        raise SystemExit("Сначала соберите программу: python build.py")
+    if not (ROOT / "dist" / "Azimut" / "_internal").is_dir():
+        raise SystemExit("Нет папки dist\\Azimut\\_internal. Сначала соберите программу: python build.py")
     ensure_utf8_bom(ISS)
     iscc = find_iscc()
     output_dir = ROOT / "dist"

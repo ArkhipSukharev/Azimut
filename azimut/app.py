@@ -1218,6 +1218,12 @@ class AzimutApp:
         if self.settings.autoconnect and self.profile.get() and not azimut_running():
             self.connect()
 
+    def _set_zapret_progress(self, message: str) -> None:
+        if hasattr(self, "zapret_info"):
+            self.zapret_info.configure(text=message)
+        if hasattr(self, "zapret_state"):
+            self.zapret_state.configure(text=message)
+
     def _start_zapret_job(self, force_pick: bool = False, then_connect: bool = False, chosen: str | None = None) -> None:
         if self._zapret_busy:
             messagebox.showinfo(APP_NAME, "Сейчас уже подбирается обход. Подождите, это занимает две-три минуты.")
@@ -1225,32 +1231,25 @@ class AzimutApp:
         self._zapret_busy = True
         self._refresh_engine_states()
         if force_pick:
-            self._show_wait("Подбираю обход", "Проверяю способы по очереди. Надпись ниже покажет, какой сейчас из общего числа.")
-        elif chosen:
-            title = zapret_engine.strategy_title(chosen)
-            self._show_wait("Включаю обход", f"Пробую способ «{title}» и проверяю YouTube и Discord.")
+            self._set_zapret_progress("Подбираю обход…")
         else:
-            self._show_wait("Включаю обход", "Проверяю выбранный способ и открытие YouTube и Discord.")
+            title = zapret_engine.strategy_title(chosen or self.settings.zapret_strategy)
+            if title == "не выбран":
+                title = zapret_engine.strategy_titles()[0]
+            self._set_zapret_progress(f"Включаю обход «{title}»")
 
         def runner():
             error = None
             result = None
+            started = ""
             try:
                 def progress(message: str) -> None:
-                    def apply(text=message) -> None:
-                        self._set_wait(detail=text)
-                        self.zapret_info.configure(text=text)
-                        if hasattr(self, "zapret_state"):
-                            self.zapret_state.configure(text=text)
-
-                    self.root.after(0, apply)
+                    self.root.after(0, lambda text=message: self._set_zapret_progress(text))
 
                 if force_pick:
                     result = zapret_engine.pick_best(progress=progress, preferred=self.settings.zapret_strategy)
-                elif chosen:
-                    result = zapret_engine.start_and_probe(chosen, progress=progress)
                 else:
-                    result = zapret_engine.start_or_pick(self.settings.zapret_strategy, progress=progress)
+                    started = zapret_engine.start(chosen or self.settings.zapret_strategy)
                 report = self._bypass_report
                 if (
                     result
@@ -1266,14 +1265,14 @@ class AzimutApp:
                             report.rolled_back = True
                             report.zapret_updated = False
                             report.goodbyedpi_updated = False
-                            result = zapret_engine.start_or_pick(self.settings.zapret_strategy, progress=progress)
+                            started = zapret_engine.start(self.settings.zapret_strategy)
+                            result = None
             except Exception as exc:
                 error = exc
 
             def finish():
                 self._zapret_busy = False
                 self._refresh_engine_states()
-                self._hide_wait()
                 if not self.settings.zapret_enabled:
                     zapret_engine.stop(force=True)
                     self.zapret_info.configure(text=self._zapret_status_text())
@@ -1293,7 +1292,15 @@ class AzimutApp:
                     self.settings.save()
                     self._show_zapret_result(result)
                     write_log(f"Обход «{result.title}»: {result.probe.summary()}")
+                elif started:
+                    self.settings.zapret_strategy = started
+                    self.settings.save()
+                    title = zapret_engine.strategy_title(started)
+                    self._set_zapret_combo(title)
+                    self.zapret_info.configure(text=f"Включён обход «{title}»")
+                    write_log(f"Включён обход «{title}»")
                 self._update_home_info()
+                self._refresh_engine_states()
                 if then_connect:
                     self._maybe_autoconnect()
 
@@ -1302,7 +1309,7 @@ class AzimutApp:
         threading.Thread(target=runner, daemon=True).start()
 
     def _boot_zapret(self) -> None:
-        self._show_wait("Проверяю обход", "Смотрю официальные версии zapret и GoodbyeDPI на GitHub.")
+        self._set_zapret_progress("Проверяю версии обхода…")
 
         def runner():
             report = None
@@ -1311,14 +1318,13 @@ class AzimutApp:
                 from .bypass_update import ensure_latest
 
                 def progress(message: str) -> None:
-                    self.root.after(0, lambda text=message: self._set_wait(detail=text))
+                    self.root.after(0, lambda text=message: self._set_zapret_progress(text))
 
                 report = ensure_latest(self.settings.github_token, progress=progress)
             except Exception as exc:
                 error = exc
 
             def finish():
-                self._hide_wait()
                 if error:
                     write_log(f"Проверка zapret и GoodbyeDPI: {error}")
                     self.zapret_info.configure(text=f"Не удалось проверить версии обхода: {error}")
@@ -1369,7 +1375,7 @@ class AzimutApp:
         if self._zapret_busy or self.busy:
             messagebox.showinfo(APP_NAME, "Сейчас уже идёт другая операция. Подождите несколько секунд.")
             return
-        self._show_wait("Проверяю обход", "Смотрю официальные версии zapret и GoodbyeDPI.")
+        self._set_zapret_progress("Проверяю версии обхода…")
 
         def runner():
             report = None
@@ -1378,14 +1384,13 @@ class AzimutApp:
                 from .bypass_update import ensure_latest
 
                 def progress(message: str) -> None:
-                    self.root.after(0, lambda text=message: self._set_wait(detail=text))
+                    self.root.after(0, lambda text=message: self._set_zapret_progress(text))
 
                 report = ensure_latest(self.settings.github_token, progress=progress)
             except Exception as exc:
                 error = exc
 
             def finish():
-                self._hide_wait()
                 if error:
                     write_log(f"Ручная проверка обхода: {error}")
                     self.zapret_info.configure(text=f"Не удалось проверить версии обхода: {error}")
@@ -2335,12 +2340,12 @@ def run() -> None:
     if not icon_path().exists():
         create_icon(icon_path())
     try:
-        from .autostart import create_app_shortcut, create_desktop_shortcut
+        from .autostart import create_app_shortcut
+        from .paths import desktop_shortcut_exists
 
         if is_frozen():
-            if not (desktop_dir() / "Azimut.lnk").exists():
-                create_desktop_shortcut()
-        elif not (app_root() / "Azimut.lnk").exists():
+            pass
+        elif not (app_root() / "Azimut.lnk").exists() and not desktop_shortcut_exists():
             create_app_shortcut()
     except Exception:
         pass
