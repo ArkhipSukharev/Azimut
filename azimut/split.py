@@ -32,17 +32,34 @@ YOUTUBE_MARKERS = (
 )
 
 
-def cache_key(selected_ids: list[str], extra_domains: list[str], zapret_enabled: bool = False) -> str:
-    raw = ",".join(sorted(selected_ids)) + "|" + ",".join(sorted(extra_domains)) + f"|z{int(zapret_enabled)}"
+def cache_key(
+    selected_ids: list[str],
+    extra_domains: list[str],
+    zapret_enabled: bool = False,
+    extra_ips: list[str] | None = None,
+) -> str:
+    raw = (
+        ",".join(sorted(selected_ids))
+        + "|"
+        + ",".join(sorted(extra_domains))
+        + f"|z{int(zapret_enabled)}"
+        + "|"
+        + ",".join(sorted(extra_ips or []))
+    )
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def cache_file(selected_ids: list[str], extra_domains: list[str], zapret_enabled: bool = False):
-    return cache_dir() / f"split_{cache_key(selected_ids, extra_domains, zapret_enabled)}.txt"
+def cache_file(
+    selected_ids: list[str],
+    extra_domains: list[str],
+    zapret_enabled: bool = False,
+    extra_ips: list[str] | None = None,
+):
+    return cache_dir() / f"split_{cache_key(selected_ids, extra_domains, zapret_enabled, extra_ips)}.txt"
 
 
 def fetch_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "Azimut/1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "Azimut/1.7"})
     with urllib.request.urlopen(request, timeout=45, context=ssl.create_default_context()) as response:
         return response.read().decode("utf-8", errors="replace")
 
@@ -171,12 +188,33 @@ def vpn_selected_ids(selected_ids: list[str], zapret_enabled: bool) -> list[str]
     return [item for item in selected_ids if item not in {"youtube", "discord"}]
 
 
+def _parse_extra_ips(extra_ips: list[str] | None) -> list[ipaddress.IPv4Network]:
+    nets: list[ipaddress.IPv4Network] = []
+    for raw in extra_ips or []:
+        line = str(raw).strip()
+        if not line:
+            continue
+        if "/" not in line:
+            line = f"{line}/32"
+        try:
+            net = ipaddress.ip_network(line, strict=False)
+        except ValueError:
+            continue
+        if isinstance(net, ipaddress.IPv4Network):
+            nets.append(net)
+    return nets
+
+
 def build_split_networks(
-    selected_ids: list[str], extra_domains: list[str] | None = None, zapret_enabled: bool = False
+    selected_ids: list[str],
+    extra_domains: list[str] | None = None,
+    zapret_enabled: bool = False,
+    extra_ips: list[str] | None = None,
 ) -> list[ipaddress.IPv4Network]:
     chosen = {item.strip() for item in vpn_selected_ids(selected_ids, zapret_enabled) if item.strip()}
     extra = [item.strip().lower() for item in (extra_domains or []) if item.strip()]
-    if not chosen and not extra:
+    app_nets = _parse_extra_ips(extra_ips)
+    if not chosen and not extra and not app_nets:
         return []
     nets = parse_cidrs("\n".join(DNS_VIA_TUNNEL))
     youtube_on = "youtube" in chosen
@@ -210,6 +248,8 @@ def build_split_networks(
             nets += youtube_networks()
     if extra:
         nets += resolve_many(extra, skip_youtube=False)
+    if app_nets:
+        nets += app_nets
     merged = merge(nets)
     if zapret_enabled:
         merged = subtract(merged, youtube_networks())
@@ -219,14 +259,18 @@ def build_split_networks(
 
 
 def allowed_ips_text(
-    selected_ids: list[str], extra_domains: list[str] | None = None, force: bool = False, zapret_enabled: bool = False
+    selected_ids: list[str],
+    extra_domains: list[str] | None = None,
+    force: bool = False,
+    zapret_enabled: bool = False,
+    extra_ips: list[str] | None = None,
 ) -> str:
     extra = extra_domains or []
-    path = cache_file(selected_ids, extra, zapret_enabled)
+    path = cache_file(selected_ids, extra, zapret_enabled, extra_ips)
     if path.exists() and not force:
         return path.read_text(encoding="utf-8").strip()
     try:
-        nets = build_split_networks(selected_ids, extra, zapret_enabled)
+        nets = build_split_networks(selected_ids, extra, zapret_enabled, extra_ips)
         items = [str(net) for net in nets]
         lines = []
         for index in range(0, len(items), 40):
@@ -248,6 +292,7 @@ def apply_mode(
     extra_domains: list[str] | None = None,
     zapret_enabled: bool = False,
     force: bool = False,
+    extra_ips: list[str] | None = None,
 ) -> str:
     original_allowed = [
         line for line in config_text.splitlines() if line.strip().lower().startswith("allowedips")
@@ -270,9 +315,21 @@ def apply_mode(
     if mode == "full":
         extra = ("\n".join(original_allowed) + "\n") if original_allowed else "AllowedIPs = 0.0.0.0/0, ::/0\n"
     else:
-        extra = allowed_ips_text(selected_ids, extra_domains, force=force, zapret_enabled=zapret_enabled) + "\n"
+        extra = (
+            allowed_ips_text(
+                selected_ids,
+                extra_domains,
+                force=force,
+                zapret_enabled=zapret_enabled,
+                extra_ips=extra_ips,
+            )
+            + "\n"
+        )
         if extra.strip() == "":
-            raise RuntimeError("Не отмечен ни один сайт для туннеля. Откройте страницу «Сайты» и выберите сервисы.")
+            raise RuntimeError(
+                "Не отмечен ни один сайт и ни одна программа для туннеля. "
+                "Откройте страницу «Сайты» или «Программы» и выберите, что пускать через VPN."
+            )
     if "[Peer]" not in text:
         return text + extra
     head, tail = text.split("[Peer]", 1)

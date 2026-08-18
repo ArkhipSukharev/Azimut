@@ -24,6 +24,24 @@ ZAPRET_FILES = (
     ("zapret-winws/WinDivert64.sys", "zapret/bin/WinDivert64.sys"),
     ("zapret-winws/cygwin1.dll", "zapret/bin/cygwin1.dll"),
     ("zapret-winws/files/quic_initial_www_google_com.bin", "zapret/bin/quic_initial_www_google_com.bin"),
+    ("zapret-winws/files/tls_clienthello_www_google_com.bin", "zapret/bin/tls_clienthello_www_google_com.bin"),
+)
+
+OPTIONAL_ZAPRET_FILES = (
+    ("zapret-winws/files/tls_clienthello_max_ru.bin", "zapret/bin/tls_clienthello_max_ru.bin"),
+    ("zapret-winws/files/ACTIVE_DISCORD_UDP.bin", "zapret/bin/ACTIVE_DISCORD_UDP.bin"),
+)
+
+BACKUP_RELATIVE = (
+    "zapret/bin/winws.exe",
+    "zapret/bin/WinDivert.dll",
+    "zapret/bin/WinDivert64.sys",
+    "zapret/bin/cygwin1.dll",
+    "zapret/bin/quic_initial_www_google_com.bin",
+    "zapret/bin/tls_clienthello_www_google_com.bin",
+    "zapret/bin/tls_clienthello_max_ru.bin",
+    "zapret/bin/ACTIVE_DISCORD_UDP.bin",
+    "zapret/goodbyedpi/goodbyedpi.exe",
 )
 
 
@@ -34,6 +52,7 @@ class BypassReport:
     zapret_updated: bool = False
     goodbyedpi_updated: bool = False
     already_current: bool = False
+    rolled_back: bool = False
     error: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -65,6 +84,66 @@ def goodbyedpi_dir() -> Path:
 
 def goodbyedpi_path() -> Path:
     return goodbyedpi_dir() / "goodbyedpi.exe"
+
+
+def backup_dir() -> Path:
+    path = app_root() / "zapret" / "backup"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def has_backup() -> bool:
+    folder = app_root() / "zapret" / "backup"
+    return (folder / "winws.exe").is_file() or (folder / "goodbyedpi.exe").is_file()
+
+
+def snapshot_backup() -> None:
+    dest_root = backup_dir()
+    copied = False
+    for relative in BACKUP_RELATIVE:
+        source = app_root() / relative.replace("/", "\\")
+        if not source.is_file():
+            continue
+        dest = dest_root / Path(relative).name
+        dest.write_bytes(source.read_bytes())
+        copied = True
+    if copied:
+        versions = versions_path()
+        if versions.is_file():
+            (dest_root / "versions.json").write_bytes(versions.read_bytes())
+
+
+def restore_backup() -> bool:
+    folder = app_root() / "zapret" / "backup"
+    if not has_backup():
+        return False
+    from . import zapret as zapret_engine
+
+    try:
+        zapret_engine.stop(force=True)
+    except Exception:
+        pass
+    mapping = {
+        "winws.exe": app_root() / "zapret" / "bin" / "winws.exe",
+        "WinDivert.dll": app_root() / "zapret" / "bin" / "WinDivert.dll",
+        "WinDivert64.sys": app_root() / "zapret" / "bin" / "WinDivert64.sys",
+        "cygwin1.dll": app_root() / "zapret" / "bin" / "cygwin1.dll",
+        "quic_initial_www_google_com.bin": app_root() / "zapret" / "bin" / "quic_initial_www_google_com.bin",
+        "tls_clienthello_www_google_com.bin": app_root() / "zapret" / "bin" / "tls_clienthello_www_google_com.bin",
+        "tls_clienthello_max_ru.bin": app_root() / "zapret" / "bin" / "tls_clienthello_max_ru.bin",
+        "ACTIVE_DISCORD_UDP.bin": app_root() / "zapret" / "bin" / "ACTIVE_DISCORD_UDP.bin",
+        "goodbyedpi.exe": goodbyedpi_path(),
+    }
+    restored = False
+    for name, dest in mapping.items():
+        source = folder / name
+        if source.is_file():
+            _replace_file(source, dest)
+            restored = True
+    snapshot = folder / "versions.json"
+    if snapshot.is_file():
+        versions_path().write_bytes(snapshot.read_bytes())
+    return restored
 
 
 def load_versions() -> dict:
@@ -147,12 +226,18 @@ def _update_zapret(token: str, stored: dict, progress=None) -> tuple[bool, str]:
         zapret_engine.stop(force=True)
     except Exception:
         pass
+    snapshot_backup()
     hashes = dict(stored.get("hashes") or {})
     with tempfile.TemporaryDirectory(prefix="azimut_zapret_") as raw:
         work = Path(raw)
-        for remote, relative in ZAPRET_FILES:
-            _blob, url = _github_file(ZAPRET_BUNDLE, remote, token)
-            downloaded = _download(url, token, work / Path(remote).name, accept="*/*")
+        for remote, relative in ZAPRET_FILES + OPTIONAL_ZAPRET_FILES:
+            try:
+                _blob, url = _github_file(ZAPRET_BUNDLE, remote, token)
+                downloaded = _download(url, token, work / Path(remote).name, accept="*/*")
+            except Exception:
+                if (remote, relative) in OPTIONAL_ZAPRET_FILES:
+                    continue
+                raise
             dest = app_root() / relative.replace("/", "\\")
             _replace_file(downloaded, dest)
             hashes[relative] = sha256_file(dest)
@@ -182,6 +267,7 @@ def _update_goodbyedpi(token: str, stored: dict, tag: str, asset: dict, progress
         zapret_engine.stop(force=True)
     except Exception:
         pass
+    snapshot_backup()
     url = str(asset.get("url") or "")
     if not url:
         raise RuntimeError("У релиза GoodbyeDPI нет файла для скачивания.")

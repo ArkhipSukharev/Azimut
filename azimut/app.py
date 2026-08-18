@@ -82,6 +82,10 @@ class AzimutApp:
         self._sites_dirty = False
         self._notified_dead = False
         self._last_tunnel_error = ""
+        self._rebuild_job = None
+        self._health_ticks = 0
+        self._app_ticks = 0
+        self._engine_recheck_at = time.time() + 6 * 3600
         self._build()
         self.refresh_profiles()
         self.refresh_status()
@@ -125,6 +129,7 @@ class AzimutApp:
         for key, title in [
             ("home", "Главная"),
             ("sites", "Сайты"),
+            ("apps", "Программы"),
             ("profiles", "Профили"),
             ("check", "Проверка"),
             ("log", "Журнал"),
@@ -154,6 +159,7 @@ class AzimutApp:
         self.pages: dict[str, ctk.CTkFrame] = {}
         self._page_home()
         self._page_sites()
+        self._page_apps()
         self._page_profiles()
         self._page_check()
         self._page_log()
@@ -273,7 +279,7 @@ class AzimutApp:
         modes.pack(pady=(22, 0))
         self.split_btn = ctk.CTkButton(
             modes,
-            text="Нужные сайты",
+            text="Сайты и программы",
             width=168,
             height=36,
             corner_radius=12,
@@ -318,6 +324,30 @@ class AzimutApp:
             font=_font(12),
             command=self._pick_zapret,
         ).pack(side="left", padx=(10, 0))
+        ctk.CTkButton(
+            zapret_row,
+            text="Проверить обход",
+            width=140,
+            height=30,
+            corner_radius=10,
+            fg_color=CARD2,
+            hover_color=LINE,
+            text_color=MUTED,
+            font=_font(12),
+            command=self._check_bypass_now,
+        ).pack(side="left", padx=(8, 0))
+        ctk.CTkButton(
+            zapret_row,
+            text="Вернуть прежний",
+            width=140,
+            height=30,
+            corner_radius=10,
+            fg_color=CARD2,
+            hover_color=LINE,
+            text_color=MUTED,
+            font=_font(12),
+            command=self._restore_bypass,
+        ).pack(side="left", padx=(8, 0))
 
         pick_row = ctk.CTkFrame(zapret_box, fg_color="transparent")
         pick_row.pack(pady=(10, 0))
@@ -386,7 +416,7 @@ class AzimutApp:
         ctk.CTkLabel(top, text="Сайты через туннель", font=_font(26, "bold"), text_color=TEXT).pack(side="left")
         ctk.CTkLabel(
             page,
-            text="Отметьте сервисы, которые должны идти через VPN в режиме «Нужные сайты». На WARP, который создал Azimut, этот список не действует: такой профиль всегда пускает весь интернет. Discord и YouTube при включённом обходе идут напрямую, без туннеля. Если туннель уже включён и вы изменили список, нажмите «Применить сейчас» — программа сама переподключит туннель.",
+            text="Отметьте сервисы, которые должны идти через VPN в режиме «Сайты и программы». Программы выбираются на соседней странице. На WARP, который создал Azimut, этот список не действует: такой профиль всегда пускает весь интернет. Discord и YouTube при включённом обходе идут напрямую, без туннеля. Если туннель уже включён, список применится сам.",
             font=_font(13),
             text_color=MUTED,
             wraplength=760,
@@ -433,7 +463,7 @@ class AzimutApp:
         apply_inner.pack(fill="x", padx=14, pady=10)
         ctk.CTkLabel(
             apply_inner,
-            text="Список сайтов изменён. Чтобы он пошёл в туннель, примените его сейчас.",
+            text="Список изменён. Туннель сейчас сам пересоберёт маршруты. Если не пересобрался — нажмите кнопку.",
             font=_font(13),
             text_color=TEXT,
             wraplength=520,
@@ -477,6 +507,49 @@ class AzimutApp:
         self._render_sites()
         self._render_custom_sites()
 
+    def _page_apps(self) -> None:
+        page = ctk.CTkFrame(self.body, fg_color="transparent")
+        self.pages["apps"] = page
+        top = ctk.CTkFrame(page, fg_color="transparent")
+        top.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(top, text="Программы через туннель", font=_font(26, "bold"), text_color=TEXT).pack(side="left")
+        ctk.CTkLabel(
+            page,
+            text="Выберите программы, чей интернет должен идти через VPN в режиме «Сайты и программы». Azimut смотрит, к каким адресам подключается выбранная программа, запоминает их и пускает через туннель. Первые секунды после добавления новой программы адреса ещё могут идти напрямую, затем список догоняет. Системные программы Windows сюда лучше не добавлять.",
+            font=_font(13),
+            text_color=MUTED,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 12))
+        tools = ctk.CTkFrame(page, fg_color="transparent")
+        tools.pack(fill="x", pady=(0, 10))
+        ctk.CTkButton(
+            tools,
+            text="Добавить файл программы",
+            width=220,
+            height=36,
+            corner_radius=10,
+            font=_font(13),
+            command=self._add_app_file,
+        ).pack(side="left")
+        ctk.CTkButton(
+            tools,
+            text="Из запущенных",
+            width=150,
+            height=36,
+            corner_radius=10,
+            fg_color=CARD,
+            hover_color=CARD2,
+            text_color=TEXT,
+            font=_font(13),
+            command=self._add_running_app,
+        ).pack(side="left", padx=(8, 0))
+        self.apps_info = ctk.CTkLabel(page, text="", font=_font(12), text_color=MUTED, wraplength=760, justify="left")
+        self.apps_info.pack(anchor="w", pady=(0, 8))
+        self.apps_list = ctk.CTkScrollableFrame(page, fg_color=CARD, corner_radius=20)
+        self.apps_list.pack(fill="both", expand=True)
+        self._render_apps()
+
     def _page_profiles(self) -> None:
         page = ctk.CTkFrame(self.body, fg_color="transparent")
         self.pages["profiles"] = page
@@ -515,7 +588,7 @@ class AzimutApp:
         ctk.CTkLabel(page, text="Проверка сайтов", font=_font(26, "bold"), text_color=TEXT).pack(anchor="w")
         ctk.CTkLabel(
             page,
-            text="Показывает, пойдёт ли сайт через туннель и открывается ли он сейчас по сети.",
+            text="Показывает, должен ли сайт идти через туннель по списку маршрутов и открывается ли он сейчас именно через туннель, а не просто с компьютера.",
             font=_font(13),
             text_color=MUTED,
         ).pack(anchor="w", pady=(4, 16))
@@ -661,6 +734,17 @@ class AzimutApp:
             text_color=TEXT,
             command=self.refresh_split,
         ).pack(side="left")
+        ctk.CTkButton(
+            row,
+            text="Проверить файлы обхода",
+            width=190,
+            height=40,
+            corner_radius=12,
+            fg_color=CARD2,
+            hover_color=LINE,
+            text_color=TEXT,
+            command=self._diagnose_files,
+        ).pack(side="left", padx=8)
         ctk.CTkLabel(
             page,
             text=(
@@ -691,22 +775,26 @@ class AzimutApp:
         if name == "sites":
             self._render_sites()
             self._render_custom_sites()
+        if name == "apps":
+            self._render_apps()
 
     def _set_mode(self, mode: str, silent: bool = False) -> None:
         if mode == "split" and self._current_is_generated_warp():
             if not silent:
                 messagebox.showinfo(
                     APP_NAME,
-                    "Для WARP, который создал Azimut, режим «Нужные сайты» недоступен. "
+                    "Для WARP, который создал Azimut, режим «Сайты и программы» недоступен. "
                     "Такой профиль всегда пускает весь интернет через туннель. "
-                    "Список на странице «Сайты» на него не действует. "
-                    "Режим «Нужные сайты» остаётся только для импортированных конфигов.",
+                    "Списки на страницах «Сайты» и «Программы» на него не действуют. "
+                    "Режим «Сайты и программы» остаётся только для импортированных конфигов.",
                 )
             mode = "full"
         self.mode.set(mode)
         self._save_mode()
         self._paint_mode_buttons()
         self._update_home_info()
+        if azimut_running() and not silent:
+            self._schedule_tunnel_rebuild("сменился режим туннеля")
 
     def _paint_mode_buttons(self) -> None:
         forbidden = self._current_is_generated_warp()
@@ -777,12 +865,43 @@ class AzimutApp:
     def _selected_site_ids(self) -> list[str]:
         return [site.id for site in CATALOG if self.site_vars[site.id].get()]
 
+    def _app_ip_list(self) -> list[str]:
+        from .apps import networks_for_apps
+
+        return [str(net) for net in networks_for_apps(self.settings.selected_apps)]
+
+    def _split_can_rebuild(self) -> bool:
+        return bool(azimut_running() and self.mode.get() == "split" and not self._current_is_generated_warp())
+
+    def _schedule_tunnel_rebuild(self, reason: str) -> None:
+        if not self._split_can_rebuild() and not (
+            azimut_running() and self.mode.get() == "full" and "режим" in reason
+        ):
+            return
+        if self._rebuild_job is not None:
+            try:
+                self.root.after_cancel(self._rebuild_job)
+            except Exception:
+                pass
+        self._sites_dirty = True
+        self._update_apply_sites_bar()
+        self._rebuild_job = self.root.after(1600, lambda: self._rebuild_tunnel(reason))
+
+    def _rebuild_tunnel(self, reason: str) -> None:
+        self._rebuild_job = None
+        if not azimut_running() or self.busy:
+            return
+        write_log(f"Пересобираю туннель: {reason}")
+        self._sites_dirty = False
+        self._update_apply_sites_bar()
+        self.connect()
+
     def _save_sites(self) -> None:
         self.settings.selected_sites = self._selected_site_ids()
         self.settings.exclude_youtube = "youtube" not in self.settings.selected_sites
         self.settings.save()
-        if azimut_running() and self.mode.get() == "split" and not self._current_is_generated_warp():
-            self._sites_dirty = True
+        if self._split_can_rebuild():
+            self._schedule_tunnel_rebuild("изменился список сайтов")
         self._update_apply_sites_bar()
         self._update_home_info()
 
@@ -878,8 +997,8 @@ class AzimutApp:
         if raw not in self.settings.custom_sites:
             self.settings.custom_sites.append(raw)
             self.settings.save()
-        if azimut_running() and self.mode.get() == "split" and not self._current_is_generated_warp():
-            self._sites_dirty = True
+        if self._split_can_rebuild():
+            self._schedule_tunnel_rebuild("добавлен свой сайт")
         self.custom_entry.delete(0, "end")
         self._render_custom_sites()
         self._update_apply_sites_bar()
@@ -889,11 +1008,132 @@ class AzimutApp:
     def _remove_custom_site(self, domain: str) -> None:
         self.settings.custom_sites = [item for item in self.settings.custom_sites if item != domain]
         self.settings.save()
-        if azimut_running() and self.mode.get() == "split" and not self._current_is_generated_warp():
-            self._sites_dirty = True
+        if self._split_can_rebuild():
+            self._schedule_tunnel_rebuild("убран свой сайт")
         self._render_custom_sites()
         self._update_apply_sites_bar()
         self._update_home_info()
+
+    def _render_apps(self) -> None:
+        if not hasattr(self, "apps_list"):
+            return
+        from .apps import display_name, load_learned
+
+        for child in self.apps_list.winfo_children():
+            child.destroy()
+        learned = load_learned()
+        apps = list(self.settings.selected_apps)
+        if hasattr(self, "apps_info"):
+            if apps:
+                self.apps_info.configure(
+                    text=f"Выбрано программ: {len(apps)}. Адреса подтягиваются, пока программа в сети."
+                )
+            else:
+                self.apps_info.configure(text="Пока ни одна программа не выбрана.")
+        if not apps:
+            ctk.CTkLabel(
+                self.apps_list,
+                text="Добавьте Telegram, браузер или другую программу — её адреса пойдут в туннель вместе с выбранными сайтами.",
+                font=_font(13),
+                text_color=MUTED,
+                wraplength=680,
+                justify="left",
+            ).pack(anchor="w", padx=18, pady=18)
+            return
+        for path in apps:
+            card = ctk.CTkFrame(self.apps_list, fg_color=CARD2, corner_radius=14)
+            card.pack(fill="x", padx=12, pady=6)
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(fill="x", padx=14, pady=12)
+            ctk.CTkLabel(inner, text=display_name(path), font=_font(15, "bold"), text_color=TEXT).pack(anchor="w")
+            count = len(learned.get(path) or [])
+            ctk.CTkLabel(
+                inner,
+                text=f"{path}\nзапомнено адресов: {count}",
+                font=_font(12),
+                text_color=MUTED,
+                justify="left",
+            ).pack(anchor="w", pady=(4, 0))
+            ctk.CTkButton(
+                inner,
+                text="Убрать",
+                width=90,
+                height=30,
+                corner_radius=8,
+                fg_color=CARD,
+                hover_color=LINE,
+                text_color=TEXT,
+                font=_font(12),
+                command=lambda item=path: self._remove_app(item),
+            ).pack(anchor="w", pady=(8, 0))
+
+    def _save_apps(self) -> None:
+        self.settings.save()
+        self._render_apps()
+        if self._split_can_rebuild():
+            self._schedule_tunnel_rebuild("изменился список программ")
+        self._update_home_info()
+
+    def _add_app_file(self) -> None:
+        from .apps import normalize_app_path
+
+        source = filedialog.askopenfilename(filetypes=[("Программы", "*.exe"), ("Все файлы", "*.*")])
+        if not source:
+            return
+        path = normalize_app_path(source)
+        if not path:
+            return
+        if path not in self.settings.selected_apps:
+            self.settings.selected_apps.append(path)
+        self._save_apps()
+        write_log(f"В туннель добавлена программа: {path}")
+
+    def _add_running_app(self) -> None:
+        from .apps import list_running_apps
+
+        running = list_running_apps()
+        if not running:
+            messagebox.showinfo(APP_NAME, "Сейчас нет подходящих запущенных программ.")
+            return
+        picker = tk.Toplevel(self.root)
+        picker.title("Запущенные программы")
+        picker.configure(bg=BG)
+        picker.geometry("640x420")
+        picker.transient(self.root)
+        box = ctk.CTkScrollableFrame(picker, fg_color=CARD, corner_radius=12)
+        box.pack(fill="both", expand=True, padx=16, pady=16)
+        for path, name in running:
+            ctk.CTkButton(
+                box,
+                text=f"{name}\n{path}",
+                anchor="w",
+                height=52,
+                corner_radius=10,
+                fg_color=CARD2,
+                hover_color=LINE,
+                text_color=TEXT,
+                font=_font(13),
+                command=lambda item=path: self._pick_running_app(picker, item),
+            ).pack(fill="x", pady=4)
+
+    def _pick_running_app(self, window, path: str) -> None:
+        from .apps import normalize_app_path
+
+        chosen = normalize_app_path(path)
+        try:
+            window.destroy()
+        except Exception:
+            pass
+        if not chosen:
+            return
+        if chosen not in self.settings.selected_apps:
+            self.settings.selected_apps.append(chosen)
+        self._save_apps()
+        write_log(f"В туннель добавлена запущенная программа: {chosen}")
+
+    def _remove_app(self, path: str) -> None:
+        self.settings.selected_apps = [item for item in self.settings.selected_apps if item != path]
+        self._save_apps()
 
     def _prepared_config(self, text: str, name: str = "", source: str = "", force_split: bool = False) -> str:
         if is_generated_warp(text, name, source):
@@ -908,6 +1148,7 @@ class AzimutApp:
             self.settings.custom_sites,
             zapret_enabled=bool(self.settings.zapret_enabled),
             force=force_split,
+            extra_ips=self._app_ip_list(),
         )
 
     def _zapret_status_text(self) -> str:
@@ -951,7 +1192,7 @@ class AzimutApp:
             self._set_zapret_combo(self._zapret_combo_fallback())
             messagebox.showwarning(
                 APP_NAME,
-                "Сначала выключите туннель или включите режим «Нужные сайты». "
+                "Сначала выключите туннель или включите режим «Сайты и программы». "
                 "Иначе проверка не отличит обход от VPN.",
             )
             return
@@ -968,6 +1209,8 @@ class AzimutApp:
             text = f"Включён обход «{result.title}».\n{extra}"
         else:
             text = f"Включён обход «{result.title}»: сайты открываются не все.\n{extra}"
+        if self._bypass_report and getattr(self._bypass_report, "rolled_back", False):
+            text = "Новая версия обхода хуже открывала сайты, поэтому возвращена прежняя.\n" + text
         self.zapret_info.configure(text=text)
         self._refresh_engine_states()
 
@@ -982,14 +1225,12 @@ class AzimutApp:
         self._zapret_busy = True
         self._refresh_engine_states()
         if force_pick:
-            self._show_wait("Подбираю обход", "Проверяю все способы zapret: general, ALT, FAKE TLS AUTO, SIMPLE FAKE и остальные. Это может занять две-три минуты.")
+            self._show_wait("Подбираю обход", "Проверяю способы по очереди. Надпись ниже покажет, какой сейчас из общего числа.")
         elif chosen:
             title = zapret_engine.strategy_title(chosen)
             self._show_wait("Включаю обход", f"Пробую способ «{title}» и проверяю YouTube и Discord.")
-        elif not self.settings.zapret_strategy:
-            self.zapret_info.configure(text="Подбираю встроенный обход и проверяю сайты…")
         else:
-            self.zapret_info.configure(text="Включаю выбранный обход…")
+            self._show_wait("Включаю обход", "Проверяю выбранный способ и открытие YouTube и Discord.")
 
         def runner():
             error = None
@@ -997,10 +1238,8 @@ class AzimutApp:
             try:
                 def progress(message: str) -> None:
                     def apply(text=message) -> None:
-                        if force_pick or chosen:
-                            self._set_wait(detail=text)
-                        else:
-                            self.zapret_info.configure(text=text)
+                        self._set_wait(detail=text)
+                        self.zapret_info.configure(text=text)
                         if hasattr(self, "zapret_state"):
                             self.zapret_state.configure(text=text)
 
@@ -1012,14 +1251,29 @@ class AzimutApp:
                     result = zapret_engine.start_and_probe(chosen, progress=progress)
                 else:
                     result = zapret_engine.start_or_pick(self.settings.zapret_strategy, progress=progress)
+                report = self._bypass_report
+                if (
+                    result
+                    and not result.probe.good_enough
+                    and report
+                    and (report.zapret_updated or report.goodbyedpi_updated)
+                ):
+                    from .bypass_update import has_backup, restore_backup
+
+                    if has_backup():
+                        progress("Новая версия обхода хуже прежней. Возвращаю рабочую копию…")
+                        if restore_backup():
+                            report.rolled_back = True
+                            report.zapret_updated = False
+                            report.goodbyedpi_updated = False
+                            result = zapret_engine.start_or_pick(self.settings.zapret_strategy, progress=progress)
             except Exception as exc:
                 error = exc
 
             def finish():
                 self._zapret_busy = False
                 self._refresh_engine_states()
-                if force_pick or chosen:
-                    self._hide_wait()
+                self._hide_wait()
                 if not self.settings.zapret_enabled:
                     zapret_engine.stop(force=True)
                     self.zapret_info.configure(text=self._zapret_status_text())
@@ -1089,7 +1343,7 @@ class AzimutApp:
         if azimut_running() and self.mode.get() == "full":
             messagebox.showwarning(
                 APP_NAME,
-                "Сначала выключите туннель или включите режим «только нужные сайты». "
+                "Сначала выключите туннель или включите режим «Сайты и программы». "
                 "Иначе проверка не отличит обход от VPN.",
             )
             return
@@ -1104,18 +1358,82 @@ class AzimutApp:
             self.zapret_info.configure(text=self._zapret_status_text())
             write_log("Обход Discord и YouTube выключен")
             self._update_home_info()
-            if azimut_running():
-                messagebox.showinfo(
-                    APP_NAME,
-                    "Обход выключен. Чтобы Discord и YouTube пошли через VPN, выключите туннель и включите его снова.",
-                )
+            if self._split_can_rebuild() or azimut_running():
+                self._schedule_tunnel_rebuild("обход выключен")
             return
         self._start_zapret_job(force_pick=False)
-        if azimut_running():
-            messagebox.showinfo(
-                APP_NAME,
-                "Обход включён вместо VPN для Discord и YouTube. Выключите туннель и включите его снова, чтобы список применился.",
-            )
+        if self._split_can_rebuild() or azimut_running():
+            self._schedule_tunnel_rebuild("обход включён")
+
+    def _check_bypass_now(self) -> None:
+        if self._zapret_busy or self.busy:
+            messagebox.showinfo(APP_NAME, "Сейчас уже идёт другая операция. Подождите несколько секунд.")
+            return
+        self._show_wait("Проверяю обход", "Смотрю официальные версии zapret и GoodbyeDPI.")
+
+        def runner():
+            report = None
+            error = None
+            try:
+                from .bypass_update import ensure_latest
+
+                def progress(message: str) -> None:
+                    self.root.after(0, lambda text=message: self._set_wait(detail=text))
+
+                report = ensure_latest(self.settings.github_token, progress=progress)
+            except Exception as exc:
+                error = exc
+
+            def finish():
+                self._hide_wait()
+                if error:
+                    write_log(f"Ручная проверка обхода: {error}")
+                    self.zapret_info.configure(text=f"Не удалось проверить версии обхода: {error}")
+                    messagebox.showerror(APP_NAME, str(error))
+                    return
+                if report:
+                    self._bypass_report = report
+                    write_log(report.summary())
+                    self.zapret_info.configure(text=report.summary())
+                if self.settings.zapret_enabled:
+                    self.zapret_var.set(True)
+                    self._start_zapret_job(force_pick=False)
+                else:
+                    messagebox.showinfo(APP_NAME, report.summary() if report else "Проверка обхода завершена.")
+
+            self.root.after(0, finish)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _restore_bypass(self) -> None:
+        from .bypass_update import has_backup, restore_backup
+
+        if not has_backup():
+            messagebox.showinfo(APP_NAME, "Сохранённой прежней версии обхода пока нет. Она появится после первого обновления zapret или GoodbyeDPI.")
+            return
+        if not messagebox.askyesno(APP_NAME, "Вернуть предыдущие файлы zapret и GoodbyeDPI?"):
+            return
+
+        def work():
+            if not restore_backup():
+                raise RuntimeError("Не удалось вернуть прежние файлы обхода.")
+            return True
+
+        def done(_ok):
+            write_log("Возвращена прежняя версия обхода")
+            if self.settings.zapret_enabled:
+                self._start_zapret_job(force_pick=False)
+            else:
+                messagebox.showinfo(APP_NAME, "Прежние файлы обхода возвращены.")
+
+        self._run_bg(work, done, wait_title="Возвращаю обход", wait_text="Копирую сохранённые файлы на место.")
+
+    def _diagnose_files(self) -> None:
+        from .diagnose import inspect
+
+        report = inspect()
+        messagebox.showinfo(APP_NAME, report.summary())
+        write_log(report.summary())
 
     def _check_updates_later(self) -> None:
         if not self.settings.check_updates or not self.settings.github_repo.strip():
@@ -1327,12 +1645,16 @@ class AzimutApp:
         profile = find_profile(self.profile.get()) if self.profile.get() else None
         if profile and is_generated_warp(profile.text, profile.name, profile.source):
             self.home_info.configure(
-                text="Этот WARP создан Azimut: весь интернет идёт через туннель. Режим «Нужные сайты» для него выключен."
+                text="Этот WARP создан Azimut: весь интернет идёт через туннель. Режим «Сайты и программы» для него выключен."
             )
         elif profile and self.mode.get() == "split" and "0.0.0.0/0" in profile.text:
             self.home_info.configure(
-                text="Режим «Нужные сайты» подменяет маршруты из файла. Для конфига из Amnezia WG нажмите «Весь интернет»."
+                text="Режим «Сайты и программы» подменяет маршруты из файла. Для конфига из Amnezia WG нажмите «Весь интернет»."
             )
+        elif self.mode.get() == "split":
+            sites = len(self.settings.selected_sites) + len(self.settings.custom_sites)
+            apps = len(self.settings.selected_apps)
+            self.home_info.configure(text=f"Через туннель: сайтов {sites}, программ {apps}.")
         else:
             self.home_info.configure(text="")
 
@@ -1444,14 +1766,15 @@ class AzimutApp:
             def progress(message: str) -> None:
                 self.root.after(0, lambda text=message: self._set_wait(detail=text))
 
-            self.root.after(
-                0,
-                lambda: self._set_wait(detail="Подбираю обход именно для адреса Cloudflare. Это может занять пару минут…"),
-            )
-            picked = zapret_engine.pick_for_cloudflare(progress=progress, preferred=saved)
-            self.settings.zapret_strategy = picked.strategy
-            self.settings.save()
-            time.sleep(1.0)
+            if wanted_zapret:
+                self.root.after(
+                    0,
+                    lambda: self._set_wait(detail="Подбираю обход именно для адреса Cloudflare. Это может занять пару минут…"),
+                )
+                picked = zapret_engine.pick_for_cloudflare(progress=progress, preferred=saved)
+                self.settings.zapret_strategy = picked.strategy
+                self.settings.save()
+                time.sleep(1.0)
             self.root.after(0, lambda: self._set_wait(detail="Запрашиваю профиль у Cloudflare. Подождите, это не зависание…"))
             try:
                 text = create_warp_config(endpoint, self.settings.dns)
@@ -1509,7 +1832,7 @@ class AzimutApp:
             APP_NAME,
             "Конфиг сохранён как есть — без подмены маршрутов и без добавления чужой маскировки. "
             "Включён режим «Весь интернет», как в Amnezia WG. "
-            "Если потом включить «Нужные сайты», Azimut вырежет AllowedIPs из файла и подставит свой список.",
+            "Если потом включить «Сайты и программы», Azimut вырежет AllowedIPs из файла и подставит свой список.",
         )
 
     def export_cfg(self) -> None:
@@ -1613,6 +1936,7 @@ class AzimutApp:
                 self.settings.custom_sites,
                 force=True,
                 zapret_enabled=bool(self.settings.zapret_enabled),
+                extra_ips=self._app_ip_list(),
             )
 
         def done(text):
@@ -1640,7 +1964,7 @@ class AzimutApp:
             color = OK if result.reachable else MUTED
             self.check_out.insert(
                 "1.0",
-                f"{host}\nмаршрут: {result.route}\nдоступ: {result.reachable_text}\n{', '.join(result.ips)}",
+                f"{host}\nпо списку маршрутов: {result.route}\nсейчас по сети: {result.reachable_text}\n{', '.join(result.ips)}",
             )
             self.check_out.configure(text_color=color)
 
@@ -1671,7 +1995,7 @@ class AzimutApp:
                     result = check_site(host, config, probe=True)
                     mark = "●" if result.reachable else "○"
                     lines.append(
-                        f"{mark}  {host:<22} {result.route:<16} {result.reachable_text:<16} {', '.join(result.ips)}"
+                        f"{mark}  {host:<22} список:{result.route:<14} сейчас:{result.reachable_text:<28} {', '.join(result.ips)}"
                     )
                 except Exception as exc:
                     lines.append(f"!  {host:<22} ошибка           {exc}")
@@ -1736,8 +2060,84 @@ class AzimutApp:
                 )
         elif running:
             self._notified_dead = False
+        self._app_ticks += 1
+        if self._app_ticks >= 3:
+            self._app_ticks = 0
+            self._watch_selected_apps()
+        self._health_ticks += 1
+        if self._health_ticks >= 45:
+            self._health_ticks = 0
+            self._health_check_bypass()
+        if time.time() >= self._engine_recheck_at:
+            self._engine_recheck_at = time.time() + 6 * 3600
+            self._recheck_engines_quiet()
         self.refresh_status()
         self.root.after(4000, self._tick)
+
+    def _watch_selected_apps(self) -> None:
+        if not self.settings.selected_apps or not self._split_can_rebuild() or self.busy:
+            return
+
+        def runner():
+            from .apps import remember_live_ips
+
+            try:
+                added = remember_live_ips(self.settings.selected_apps)
+            except Exception as exc:
+                write_log(f"Не удалось посмотреть адреса программ: {exc}")
+                return
+            if added:
+                write_log(f"У выбранных программ появились новые адреса: {len(added)}")
+                self.root.after(0, lambda: self._schedule_tunnel_rebuild("новые адреса программ"))
+                self.root.after(0, self._render_apps)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _health_check_bypass(self) -> None:
+        if not self.settings.zapret_enabled or self._zapret_busy or self.busy:
+            return
+        if azimut_running() and self.mode.get() == "full":
+            return
+        if not zapret_engine.is_running():
+            return
+
+        def runner():
+            try:
+                probe = zapret_engine.probe_sites()
+            except Exception as exc:
+                write_log(f"Проверка живого обхода не удалась: {exc}")
+                return
+            if probe.good_enough:
+                return
+            write_log(f"Обход перестал открывать сайты: {probe.summary()}. Подбираю другой способ.")
+            self.root.after(0, lambda: self._start_zapret_job(force_pick=True))
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _recheck_engines_quiet(self) -> None:
+        if self._zapret_busy or self.busy:
+            return
+
+        def runner():
+            try:
+                from .bypass_update import ensure_latest
+
+                report = ensure_latest(self.settings.github_token)
+            except Exception as exc:
+                write_log(f"Повторная проверка версий обхода: {exc}")
+                return
+
+            def finish():
+                self._bypass_report = report
+                write_log(report.summary())
+                if report.zapret_updated or report.goodbyedpi_updated:
+                    self.zapret_info.configure(text=report.summary())
+                    if self.settings.zapret_enabled:
+                        self._start_zapret_job(force_pick=False)
+
+            self.root.after(0, finish)
+
+        threading.Thread(target=runner, daemon=True).start()
 
     def _start_tray(self) -> None:
         try:
@@ -1753,8 +2153,13 @@ class AzimutApp:
             )
             self.tray = pystray.Icon("Azimut", image, APP_NAME, menu)
             threading.Thread(target=self.tray.run, daemon=True).start()
-        except Exception:
+        except Exception as exc:
             self.tray = None
+            write_log(f"Значок у часов не запустился: {exc}")
+            if hasattr(self, "close_hint"):
+                self.close_hint.configure(
+                    text="Значок у часов не запустился. Закрытие окна выключит сеть. Перезапустите программу."
+                )
 
     def _show_window(self, *_args) -> None:
         self.root.after(0, lambda: (self.root.deiconify(), self.root.lift()))

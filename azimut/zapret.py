@@ -621,13 +621,13 @@ def _probe_url_fallback(url: str) -> bool:
     import ssl
     import urllib.request
 
-    request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Azimut/1.2"})
+    request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Azimut/1.7"})
     try:
         with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT, context=ssl.create_default_context()) as response:
             return 200 <= int(response.status) < 500
     except Exception:
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "Azimut/1.2"})
+            request = urllib.request.Request(url, headers={"User-Agent": "Azimut/1.7"})
             with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT, context=ssl.create_default_context()) as response:
                 return 200 <= int(response.status) < 500
         except Exception:
@@ -693,12 +693,13 @@ def stop(force: bool = False) -> None:
 
 
 def _ensure_engine() -> None:
+    from .diagnose import inspect
+
+    report = inspect()
+    if report.missing_required or report.broken_required:
+        raise RuntimeError(report.summary())
     if not engine_ready():
-        raise RuntimeError(
-            "Антивирус или сбой диска убрал файлы обхода (winws или WinDivert). "
-            "Добавьте всю папку Azimut в исключения антивируса и поставьте программу заново. "
-            "Azimut не будет перебирать способы обхода, пока файлы не вернутся."
-        )
+        raise RuntimeError(report.summary())
     from .protect import verify_zapret_engine
 
     try:

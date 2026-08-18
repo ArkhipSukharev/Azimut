@@ -20,6 +20,7 @@ class Settings:
     last_profile: str = ""
     selected_sites: list[str] = field(default_factory=lambda: list(DEFAULT_SELECTED))
     custom_sites: list[str] = field(default_factory=list)
+    selected_apps: list[str] = field(default_factory=list)
     zapret_enabled: bool = True
     zapret_strategy: str = ""
     check_updates: bool = True
@@ -47,6 +48,9 @@ class Settings:
             if data.exclude_youtube is False and "youtube" not in data.selected_sites:
                 data.selected_sites.append("youtube")
         leftover = str(raw.get("github_token") or "").strip()
+        from .apps import normalize_app_path
+
+        data.selected_apps = [normalize_app_path(item) for item in data.selected_apps if normalize_app_path(item)]
         dirty = leftover or "selected_sites" not in raw
         if leftover:
             migrate_github_token(leftover)
