@@ -78,6 +78,7 @@ class AzimutApp:
         self._zapret_busy = False
         self._zapret_combo_ready = False
         self._pending_release = None
+        self._bypass_report = None
         self._sites_dirty = False
         self._notified_dead = False
         self._last_tunnel_error = ""
@@ -1047,10 +1048,38 @@ class AzimutApp:
         threading.Thread(target=runner, daemon=True).start()
 
     def _boot_zapret(self) -> None:
-        if not self.settings.zapret_enabled:
-            self._maybe_autoconnect()
-            return
-        self._start_zapret_job(force_pick=False, then_connect=True)
+        self._show_wait("Проверяю обход", "Смотрю официальные версии zapret и GoodbyeDPI на GitHub.")
+
+        def runner():
+            report = None
+            error = None
+            try:
+                from .bypass_update import ensure_latest
+
+                def progress(message: str) -> None:
+                    self.root.after(0, lambda text=message: self._set_wait(detail=text))
+
+                report = ensure_latest(self.settings.github_token, progress=progress)
+            except Exception as exc:
+                error = exc
+
+            def finish():
+                self._hide_wait()
+                if error:
+                    write_log(f"Проверка zapret и GoodbyeDPI: {error}")
+                    self.zapret_info.configure(text=f"Не удалось проверить версии обхода: {error}")
+                elif report:
+                    self._bypass_report = report
+                    write_log(report.summary())
+                    self.zapret_info.configure(text=report.summary())
+                if self.settings.zapret_enabled:
+                    self._start_zapret_job(force_pick=False, then_connect=True)
+                else:
+                    self._maybe_autoconnect()
+
+            self.root.after(0, finish)
+
+        threading.Thread(target=runner, daemon=True).start()
 
     def _pick_zapret(self) -> None:
         if not self.settings.zapret_enabled:
@@ -1852,10 +1881,13 @@ class AzimutApp:
             elif zapret_engine.is_running():
                 title = zapret_engine.strategy_title(self.settings.zapret_strategy)
                 extra = (self.zapret_info.cget("text") or "") if hasattr(self, "zapret_info") else ""
+                versions = ""
+                if self._bypass_report and (self._bypass_report.zapret_tag or self._bypass_report.goodbyedpi_tag):
+                    versions = f" · zapret {self._bypass_report.zapret_tag or '—'}, GoodbyeDPI {self._bypass_report.goodbyedpi_tag or '—'}"
                 if "не все" in extra:
-                    self.zapret_state.configure(text=f"Обход «{title}»: сайты открываются не все")
+                    self.zapret_state.configure(text=f"Обход «{title}»: сайты открываются не все{versions}")
                 else:
-                    self.zapret_state.configure(text=f"Обход работает: {title}")
+                    self.zapret_state.configure(text=f"Обход работает: {title}{versions}")
             else:
                 self.zapret_state.configure(text="Обход включён в настройках, но сейчас не запущен")
 

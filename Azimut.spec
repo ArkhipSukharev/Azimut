@@ -21,6 +21,7 @@ hiddenimports = [
     "pystray._win32",
     "cryptography",
     "azimut.secrets",
+    "azimut.bypass_update",
 ]
 
 for package in ("customtkinter", "darkdetect", "PIL", "pystray", "cryptography"):

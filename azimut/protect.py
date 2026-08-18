@@ -11,8 +11,8 @@ TRUSTED_SHA256 = {
     "engine/amneziawg.exe": "dcd5ace18c26a58dd632b337f769673be14a288cfc04ba37f69587884d3806be",
     "engine/wintun.dll": "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce",
     "engine/awg.exe": "fb90a5dff7849987379889f37203186ff42aaff710c37d860d0a53100b89fa10",
-    "zapret/bin/winws.exe": "affb4f69d2ea302a7abccd5325d81826e140ddae014f1e070bc4a6c0dd555188",
-    "zapret/bin/WinDivert.dll": "c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2",
+    "zapret/bin/winws.exe": "2da71e80878dc270ac83f5893ecbb841f9752a57f1da8ff9325636b4346bc632",
+    "zapret/bin/WinDivert.dll": "16abd6a029e65557c6a309bea7b13bf81fff4e193567582e1cddbf6719f323e0",
     "zapret/bin/WinDivert64.sys": "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2",
 }
 
@@ -43,13 +43,31 @@ def verify_bytes(data: bytes, expected: str, label: str) -> None:
         )
 
 
+def _expected_hashes(relative: str) -> set[str]:
+    allowed = set()
+    builtin = TRUSTED_SHA256.get(relative)
+    if builtin:
+        allowed.add(builtin.lower())
+    try:
+        from .bypass_update import recorded_hashes
+
+        extra = recorded_hashes().get(relative)
+        if extra:
+            allowed.add(extra.lower())
+    except Exception:
+        pass
+    return allowed
+
+
 def verify_named(relative: str) -> None:
-    expected = TRUSTED_SHA256[relative]
     path = app_root() / relative.replace("/", os.sep)
     if not path.exists():
         raise RuntimeError(f"Не найден файл движка: {relative}")
     digest = sha256_file(path)
-    if digest.lower() != expected.lower():
+    allowed = _expected_hashes(relative)
+    if not allowed:
+        raise RuntimeError(f"Нет эталонной суммы для файла {relative}.")
+    if digest.lower() not in allowed:
         raise RuntimeError(
             f"Файл {relative} не прошёл проверку целостности. "
             "Его могли изменить антивирус, сбой диска или посторонняя программа. "

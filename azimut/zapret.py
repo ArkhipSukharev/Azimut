@@ -130,7 +130,8 @@ def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     check = _hidden(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"])
-    return str(pid) in check.stdout and WINWS_NAME.lower() in check.stdout.lower()
+    text = check.stdout.lower()
+    return str(pid) in check.stdout and ("winws.exe" in text or "goodbyedpi.exe" in text)
 
 
 def _our_pid() -> int | None:
@@ -155,7 +156,10 @@ def is_running() -> bool:
     if _our_pid() is not None:
         return True
     check = _hidden(["tasklist", "/FI", f"IMAGENAME eq {WINWS_NAME}", "/FO", "CSV", "/NH"])
-    return WINWS_NAME.lower() in check.stdout.lower() and "INFO:" not in check.stdout
+    if WINWS_NAME.lower() in check.stdout.lower() and "INFO:" not in check.stdout:
+        return True
+    goodbye = _hidden(["tasklist", "/FI", "IMAGENAME eq goodbyedpi.exe", "/FO", "CSV", "/NH"])
+    return "goodbyedpi.exe" in goodbye.stdout.lower() and "INFO:" not in goodbye.stdout
 
 
 def active_strategy() -> str:
@@ -643,26 +647,39 @@ def probe_sites() -> ProbeResult:
     return result
 
 
-def _kill_our_winws() -> None:
-    pid = _our_pid()
-    if pid is not None:
-        _hidden(["taskkill", "/PID", str(pid), "/F"])
-    ours = winws_path().resolve().as_posix().lower()
+def _kill_named(exe_name: str, expected: Path | None) -> None:
     listing = _hidden(
         [
             "powershell",
             "-NoProfile",
             "-Command",
-            "Get-CimInstance Win32_Process -Filter \"name='winws.exe'\" | "
+            f"Get-CimInstance Win32_Process -Filter \"name='{exe_name}'\" | "
             "ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.ExecutablePath }",
         ]
     )
+    wanted = expected.resolve().as_posix().lower() if expected and expected.exists() else ""
     for line in listing.stdout.splitlines():
         if "|" not in line:
             continue
         pid_text, path = line.split("|", 1)
-        if path.strip().replace("\\", "/").lower() == ours:
+        current = path.strip().replace("\\", "/").lower()
+        if wanted and current == wanted:
             _hidden(["taskkill", "/PID", pid_text.strip(), "/F"])
+        elif wanted and current.startswith(str(app_root()).replace("\\", "/").lower()):
+            _hidden(["taskkill", "/PID", pid_text.strip(), "/F"])
+
+
+def _kill_our_winws() -> None:
+    pid = _our_pid()
+    if pid is not None:
+        _hidden(["taskkill", "/PID", str(pid), "/F"])
+    _kill_named(WINWS_NAME, winws_path())
+    try:
+        from .bypass_update import goodbyedpi_path
+
+        _kill_named("goodbyedpi.exe", goodbyedpi_path())
+    except Exception:
+        pass
     pid_path().unlink(missing_ok=True)
 
 
@@ -701,7 +718,15 @@ def start(strategy: str | None = None, replace: bool = False) -> str:
         return chosen.id
     _ensure_engine()
     stop(force=True)
+    workdir = bin_dir()
     args = winws_args_for(chosen)
+    if chosen.kind in {"goodbye9", "goodbye5"}:
+        from .bypass_update import goodbyedpi_dir, goodbyedpi_path
+
+        if goodbyedpi_path().is_file():
+            mode = "-9" if chosen.kind == "goodbye9" else "-5"
+            args = [str(goodbyedpi_path()), mode]
+            workdir = goodbyedpi_dir()
     log = logs_dir() / "zapret.log"
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -709,7 +734,7 @@ def start(strategy: str | None = None, replace: bool = False) -> str:
         try:
             proc = subprocess.Popen(
                 args,
-                cwd=str(bin_dir()),
+                cwd=str(workdir),
                 stdout=stream,
                 stderr=stream,
                 startupinfo=startup,
