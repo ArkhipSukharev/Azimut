@@ -81,11 +81,10 @@ def fetch_latest(repo: str, token: str) -> ReleaseInfo:
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             raise RuntimeError(
-                "Релиз не найден. В закрытом репозитории нужен личный токен GitHub "
-                "с правом чтения, и хотя бы один опубликованный Release."
+                "Релиз не найден. Нужен опубликованный Release. Если репозиторий закрытый, укажите личный токен GitHub с правом чтения."
             ) from exc
         if exc.code in {401, 403}:
-            raise RuntimeError("GitHub не пустил к репозиторию. Проверьте токен и доступ к закрытому проекту.") from exc
+            raise RuntimeError("GitHub не пустил к репозиторию. Проверьте адрес проекта и, если он закрытый, токен.") from exc
         raise RuntimeError(f"GitHub ответил кодом {exc.code}.") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError("Нет доступа к GitHub. Проверьте сеть.") from exc

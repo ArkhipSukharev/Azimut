@@ -676,7 +676,7 @@ class AzimutApp:
         self.updates_var = tk.BooleanVar(value=self.settings.check_updates)
         ctk.CTkCheckBox(
             box,
-            text="Проверять обновления в закрытом GitHub",
+            text="Проверять обновления на GitHub",
             variable=self.updates_var,
             font=_font(13),
             text_color=TEXT,
