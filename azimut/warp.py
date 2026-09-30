@@ -16,8 +16,15 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
 API_URL = "https://api.cloudflareclient.com/v0a1922/reg"
+API_VERSION = "v0a1922"
 CLOUDFLARE_PUBLIC_KEY = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
 GENERATED_MARK = "Azimut-Generated"
+DEFAULT_WARP_PORT = "2408"
+CLIENT_HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": "okhttp/3.12.1",
+    "CF-Client-Version": "a-6.3-1922",
+}
 
 ENDPOINTS = [
     "162.159.193.1:500",
@@ -41,29 +48,30 @@ def generate_keypair() -> tuple[str, str]:
     return private_b64, public_b64
 
 
-def register_device(public_key: str, timeout: int = 25) -> dict:
-    body = {
-        "key": public_key,
-        "install_id": "",
-        "fcm_token": "",
-        "tos": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-        "model": "PC",
-        "serial_number": "",
-        "locale": "en_US",
-    }
+def _api_context() -> ssl.SSLContext:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.maximum_version = ssl.TLSVersion.TLSv1_2
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.load_default_certs()
+    return context
+
+
+def _api_request(url: str, body: dict, token: str = "", method: str = "POST", timeout: int = 25) -> dict:
+    headers = dict(CLIENT_HEADERS)
+    if token:
+        headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(
-        API_URL,
-        data=json.dumps(body).encode("utf-8"),
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "okhttp/3.12.1",
-            "CF-Client-Version": "a-6.11-1844",
-        },
+        url,
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        method=method,
+        headers=headers,
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context()) as response:
-            return json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=timeout, context=_api_context()) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw.strip() else {}
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Cloudflare ответил кодом {exc.code}: {details[:300]}") from exc
@@ -75,13 +83,39 @@ def register_device(public_key: str, timeout: int = 25) -> dict:
         ) from exc
 
 
+def register_device(public_key: str, timeout: int = 25) -> dict:
+    body = {
+        "key": public_key,
+        "install_id": "",
+        "fcm_token": "",
+        "tos": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "model": "PC",
+        "serial_number": "",
+        "locale": "en_US",
+        "type": "Android",
+    }
+    return _api_request(API_URL, body, timeout=timeout)
+
+
+def enable_warp(payload: dict) -> None:
+    device_id = str(payload.get("id") or "").strip()
+    token = str(payload.get("token") or "").strip()
+    if not device_id or not token:
+        return
+    url = f"https://api.cloudflareclient.com/{API_VERSION}/reg/{device_id}"
+    try:
+        _api_request(url, {"warp_enabled": True}, token=token, method="PATCH")
+    except Exception:
+        return
+
+
 def cloudflare_reachable(timeout: float = 8) -> bool:
     request = urllib.request.Request(
         "https://api.cloudflareclient.com/",
         method="GET",
         headers={
-            "User-Agent": "okhttp/3.12.1",
-            "CF-Client-Version": "a-6.11-1844",
+            "User-Agent": CLIENT_HEADERS["User-Agent"],
+            "CF-Client-Version": CLIENT_HEADERS["CF-Client-Version"],
         },
     )
     try:
@@ -120,12 +154,63 @@ def has_amnezia_params(text: str) -> bool:
     return bool(re.search(r"(?im)^\s*(Jc|Jmin|Jmax|JunkPacketCount|H1|I1|S1)\s*=", text))
 
 
+def split_host_port(value: str) -> tuple[str, str]:
+    value = (value or "").strip()
+    if not value:
+        return "", ""
+    if value.startswith("["):
+        closing = value.find("]")
+        if closing > 1:
+            host = value[1:closing]
+            rest = value[closing + 1 :]
+            port = rest[1:] if rest.startswith(":") else ""
+            return host, port
+        return value, ""
+    if value.count(":") == 1:
+        host, port = value.rsplit(":", 1)
+        return host, port
+    return value, ""
+
+
+def valid_port(port: str) -> bool:
+    return bool(port) and port.isdigit() and 1 <= int(port) <= 65535
+
+
+def load_preferred_endpoint() -> str:
+    try:
+        from .settings import Settings
+
+        return (Settings.load().endpoint or "").strip()
+    except Exception:
+        return ""
+
+
+def sanitize_endpoint(value: str, preferred: str = "") -> str:
+    value = (value or "").strip()
+    preferred = (preferred or "").strip()
+    host, port = split_host_port(value)
+    if host and valid_port(port):
+        return resolve_endpoint(f"{host}:{port}")
+    pref_host, pref_port = split_host_port(preferred)
+    if pref_host and valid_port(pref_port):
+        return resolve_endpoint(f"{pref_host}:{pref_port}")
+    if host and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", host):
+        return f"{host}:{DEFAULT_WARP_PORT}"
+    if host:
+        return resolve_endpoint(f"{host}:{DEFAULT_WARP_PORT}")
+    if preferred:
+        return resolve_endpoint(preferred)
+    return resolve_endpoint(f"engage.cloudflareclient.com:{DEFAULT_WARP_PORT}")
+
+
 def resolve_endpoint(endpoint: str) -> str:
     endpoint = (endpoint or "").strip()
-    if ":" not in endpoint:
+    host, port = split_host_port(endpoint)
+    if not host:
         return endpoint
-    host, port = endpoint.rsplit(":", 1)
     if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", host):
+        return f"{host}:{port}" if port else host
+    if not port:
         return endpoint
     try:
         infos = socket.getaddrinfo(host, int(port), socket.AF_INET, socket.SOCK_DGRAM)
@@ -187,13 +272,16 @@ def camouflage_i1() -> str:
     return _i1_from_profiles() or _i1_from_snapshot() or _random_blob(1100, 1250)
 
 
-def harden_config(text: str) -> str:
+def harden_config(text: str, preferred_endpoint: str = "") -> str:
     """Fill camouflage only for bare WireGuard WARP. Ready Amnezia files stay untouched."""
+    match = re.search(r"(?im)^\s*Endpoint\s*=\s*(.+)$", text)
+    current = match.group(1).strip() if match else ""
+    if is_warp_config(text) or GENERATED_MARK in (text or ""):
+        text = _set_line(text, "Endpoint", sanitize_endpoint(current, preferred_endpoint or load_preferred_endpoint()))
+    elif current:
+        text = _set_line(text, "Endpoint", resolve_endpoint(current))
     if has_amnezia_params(text):
         return text
-    match = re.search(r"(?im)^\s*Endpoint\s*=\s*(.+)$", text)
-    if match:
-        text = _set_line(text, "Endpoint", resolve_endpoint(match.group(1).strip()))
     if not is_warp_config(text):
         return text
     if not has_i1(text):
@@ -226,8 +314,22 @@ def peer_endpoint(payload: dict, fallback: str) -> str:
     peers = cfg.get("peers") or [{}]
     peer = peers[0] if peers else {}
     endpoint = peer.get("endpoint") or {}
-    chosen = (endpoint.get("v4") or endpoint.get("host") or fallback or "").strip()
-    return resolve_endpoint(chosen or fallback)
+    fallback = (fallback or "").strip()
+    host = (endpoint.get("host") or "").strip()
+    v4 = (endpoint.get("v4") or "").strip()
+    ports = [str(item) for item in (endpoint.get("ports") or []) if valid_port(str(item))]
+    api_port = split_host_port(host)[1]
+    port = api_port if valid_port(api_port) else (ports[0] if ports else DEFAULT_WARP_PORT)
+    pref_host, pref_port = split_host_port(fallback)
+    if pref_host and valid_port(pref_port):
+        return resolve_endpoint(f"{pref_host}:{pref_port}")
+    v4_host, v4_port = split_host_port(v4)
+    if v4_host and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", v4_host):
+        chosen_port = v4_port if valid_port(v4_port) else port
+        return f"{v4_host}:{chosen_port}"
+    if host:
+        return sanitize_endpoint(host, fallback)
+    return sanitize_endpoint("", fallback)
 
 
 def build_config(private_key: str, payload: dict, endpoint: str, dns: str) -> str:
@@ -282,4 +384,5 @@ PersistentKeepalive = 25
 def create_warp_config(endpoint: str, dns: str) -> str:
     private_key, public_key = generate_keypair()
     payload = register_device(public_key)
+    enable_warp(payload)
     return build_config(private_key, payload, endpoint, dns)

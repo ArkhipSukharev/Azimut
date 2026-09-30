@@ -298,13 +298,13 @@ def wait_handshake(tunnel: str, timeout: float = 15, full_tunnel: bool = False) 
 def connect_file(config_path: Path, text: str | None = None) -> str:
     from .paths import active_dir
     from .protect import atomic_write, wipe_active_configs
-    from .warp import harden_config
+    from .warp import harden_config, load_preferred_endpoint
 
     exe = ensure_engine()
     cleanup_broken_tunnels()
     if text is None:
         text = config_path.read_text(encoding="utf-8", errors="replace")
-    text = harden_config(text)
+    text = harden_config(text, preferred_endpoint=load_preferred_endpoint())
     name = tunnel_name_for(config_path.name)
     legacy = safe_name(config_path.name)
     if legacy.startswith(TUNNEL_PREFIX):

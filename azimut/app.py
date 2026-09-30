@@ -1898,7 +1898,8 @@ class AzimutApp:
 
             force_split = self.mode.get() == "split"
             prepared = harden_config(
-                self._prepared_config(profile.text, profile.name, profile.source, force_split=force_split)
+                self._prepared_config(profile.text, profile.name, profile.source, force_split=force_split),
+                preferred_endpoint=self.settings.endpoint,
             )
             return connect_file(active_dir() / f"{profile.name}.conf", prepared)
 

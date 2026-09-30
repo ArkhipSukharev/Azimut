@@ -1,6 +1,6 @@
 ﻿#define AppName "Azimut"
 #ifndef AppVer
-  #define AppVer "1.7.2"
+  #define AppVer "1.7.3"
 #endif
 #define AppPublisher "Azimut"
 #define AppId "{{A7E3C1D0-4B92-4F18-9E6A-8C2D5F1B0A34}"
